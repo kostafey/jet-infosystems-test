@@ -5,22 +5,43 @@
 
 (def example-rss-data)
 
-;; (run-queries '(
-;;                "http://blogs.yandex.ru/search.rss?text=java"
-;;                "http://blogs.yandex.ru/search.rss?text=scala"
-;;                "http://blogs.yandex.ru/search.rss?text=clojure"
-;;                ;; "http://blogs.yandex.ru/search.rss?text=qwe"
-;;                ))
-
 (deftest test-app
   (testing "main route"
     (let [response (app (request :get "/"))]
       (is (= (:status response) 200))
-      (is (= (:body response) "Hello World"))))
+      (is (= (:body response) (str "You should use \"search\" url, e.g. "
+                                   "\"http://localhost:8080/search?query=jet&query=smap\".")))))
 
   (testing "not-found route"
     (let [response (app (request :get "/invalid"))]
       (is (= (:status response) 404)))))
+
+(deftest test-funcs
+  (testing "get-domains"
+    (is (=
+         (get-domains '("http://www.facebook.com/permalink.php?id=100006420582083&story_fbid=1496905000533505"
+                        "http://blogs.yandex.ru/search.rss?post=http%3A%2F%2Ftwitter.com%2FPieCalculus%2Fstatuses%2F456758937291735041&ft=comments"))
+         '("yandex.ru" "facebook.com"))))
+
+  (testing "prepare-statistics-json"
+    (is (=
+         (prepare-statistics-json '("yandex.ru" "facebook.com" "yandex.ru"))
+         "{\n  \"facebook.com\" : 1,\n  \"yandex.ru\" : 2\n}")))
+
+  (testing "prepare-statistics-json"
+    (is (=
+         (parse-rss-response example-rss-data)
+         '("http://my.mail.ru/community/man/7EF5E1B3F8E7BFFF.html?thread=4D1035805DC145E3\n\n" 
+          "http://gern-babushka13.livejournal.com/108383.html?thread=362847\n\n"
+          "http://strategy-forex.livejournal.com/33138.html?thread=697970\n\n"
+          "http://friendfeed.com/uzixiem/73682e50/xsl-position#guid=7d742d03d1dec156f93bba8f59830890\n\n"
+          "http://twitter.com/benellis1986/statuses/456755231981072384\n\n"
+          "http://twitter.com/ItIsKeithWu/statuses/456754276514033664\n\n"
+          "http://twitter.com/yousoff79/statuses/456754259988463616\n\n"
+          "http://twitter.com/Unicorn_Terry/statuses/456753604779446272\n\n"
+          "http://vk.com/wall220796879_1144\n\n"
+          "http://twitter.com/snejana_06/statuses/456753508423696384\n\n")))))
+
 
 (def example-rss-data
   {:cookies {"yandexuid"

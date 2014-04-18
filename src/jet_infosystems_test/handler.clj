@@ -7,6 +7,7 @@
             [cheshire.core :as json]))
 
 (defn parse-rss-response [res]
+  "Получаем список полей link из RSS"
   (let [is-item? (fn [x] (if (coll? x)
                            (= (first x) :item)
                            false))
@@ -26,6 +27,7 @@
     links))
 
 (defn get-domains [links]
+  "Преобразуем список ссылок в список доменов"
   ;; В случае, если по разным ключевым словам было найдены полностью идентичные
   ;; ссылки, хост должен учитываться только один раз.
   (let [links (set (flatten links))
@@ -36,6 +38,7 @@
     domains))
 
 (defn prepare-statistics-json [domains]
+  "Считаем количество одноименных доменов, формируем json."
   (json/generate-string (loop [ds domains
                                acc {}]
                           (if (seq ds)
@@ -52,6 +55,7 @@
 (def ^:dynamic *max-threads* 3)
 
 (defn run-queries [queries]
+  "Многопоточное получение результатов HTTP-соединений, формирование json-ответа."
   (let [threads (loop [qs queries
                        result ()]
                   (if (seq qs)
@@ -108,3 +112,4 @@
 
 (def app
   (handler/site app-routes))
+
