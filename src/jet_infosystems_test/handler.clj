@@ -75,7 +75,7 @@
                     (if (< (count (filter #(not (realized? %)) result)) *max-threads*)
                       (let [t (first ts)]
                         ;; Запуск нового потока.
-                        @t
+                        (future @t)
                         ;; Поток перемещается в список запущенных и/или выполненных
                         (recur (next ts) (conj result t)))
                       (do
