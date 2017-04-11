@@ -1,12 +1,13 @@
 (ns jet-infosystems-test.handler
-  (:use compojure.core)
+  (:use compojure.core
+        ring.adapter.jetty)
   (:require [compojure.handler :as handler]
             [compojure.route :as route]
             [clj-http.client :as client]
             [pl.danieljanus.tagsoup :as tagsoup]
             [cheshire.core :as json]
             [clojure.core.async :as async
-             :refer [<! >! <!! >!! timeout chan alt! alts!! go]]))
+             :refer [<! >! <!! >!! timeout chan alt! alts!! go buffer]]))
 
 (defn parse-rss-response [res]
   "Получаем список полей link из RSS"
@@ -59,16 +60,17 @@
 (defn run-queries [queries]
   "Многопоточное получение результатов HTTP-соединений, формирование json-ответа."
   (let [;; Канал задач ограниченной длины
-        c (chan *max-threads*)
+        c (chan (buffer *max-threads*))
         ;; Канал результатов
         results (chan)]
-    (doseq [q queries]
-      ;; Синхронная запись задач в канал
-      (>!! c (go
-               ;; Выполнившаяся задача записывает результат в канал результатов
-               (>! results (-> q client/get parse-rss-response))
-               ;; Выполнившаяся задача освобождает канал задач
-               (<!! c))))
+    (go
+      (doseq [q queries]
+        ;; Синхронная запись задач в канал
+        (>!! c (go
+                 ;; Выполнившаяся задача записывает результат в канал результатов
+                 (>!! results (-> q client/get parse-rss-response))
+                 ;; Выполнившаяся задача освобождает канал задач
+                 (<!! c)))))
     ;; Чтение из канала результатов "довычислит" еще невычисленные потоки
     (-> (for [_ (range (count queries))]
           (<!! results))
@@ -96,3 +98,6 @@
 
 (def app
   (handler/site app-routes))
+
+(defn -main [& args]
+  (run-jetty app {:port 8080}))
