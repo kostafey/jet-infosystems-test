@@ -1,7 +1,9 @@
 (ns jet-infosystems-test.test.handler
   (:use clojure.test
         ring.mock.request
-        jet-infosystems-test.handler))
+        jet-infosystems-test.handler)
+  (:require
+   [cheshire.core :as json]))
 
 (def example-rss-data)
 
@@ -25,8 +27,10 @@
 
   (testing "prepare-statistics-json"
     (is (=
-         (prepare-statistics-json '("yandex.ru" "facebook.com" "yandex.ru"))
-         "{\n  \"facebook.com\" : 1,\n  \"yandex.ru\" : 2\n}")))
+         (json/parse-string
+          (prepare-statistics-json '("yandex.ru" "facebook.com" "yandex.ru")))
+         (json/parse-string
+          "{\n  \"facebook.com\" : 1,\n  \"yandex.ru\" : 2\n}"))))
 
   (testing "prepare-statistics-json"
     (is (=

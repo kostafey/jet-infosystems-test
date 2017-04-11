@@ -4,7 +4,9 @@
             [compojure.route :as route]
             [clj-http.client :as client]
             [pl.danieljanus.tagsoup :as tagsoup]
-            [cheshire.core :as json]))
+            [cheshire.core :as json]
+            [clojure.core.async :as async
+             :refer [<! >! <!! >!! timeout chan alt! alts!! go]]))
 
 (defn parse-rss-response [res]
   "Получаем список полей link из RSS"
@@ -56,38 +58,20 @@
 
 (defn run-queries [queries]
   "Многопоточное получение результатов HTTP-соединений, формирование json-ответа."
-  (let [threads (loop [qs queries
-                       result ()]
-                  (if (seq qs)
-                    (let [q (first qs)]
-                      (recur
-                       (next qs)
-                       ;; Создается поток с отложенным запуском - получение
-                       ;; и парсинг RSS для данного запроса.
-                       (conj result (delay (-> q client/get parse-rss-response)))))
-                    result))
-        results (loop [ts threads
-                       result ()]
-                  (if (seq ts)
-                    ;; Если количество запущенных, невыполненных потоков не
-                    ;; превышает максимальное количество одновременных
-                    ;; HTTP-соединений
-                    (if (< (count (filter #(not (realized? %)) result)) *max-threads*)
-                      (let [t (first ts)]
-                        ;; Запуск нового потока.
-                        (future @t)
-                        ;; Поток перемещается в список запущенных и/или выполненных
-                        (recur (next ts) (conj result t)))
-                      (do
-                        ;; Достигнут лимит запущенных потоков - ждем завершения
-                        ;; потоков 0,1 сек.
-                        (Thread/sleep 100)
-                        (recur ts result)))
-                    result))]
-    ;; Довычислять последние невычисленные потоки (если остались невычисленные,
-    ;; их число всегда меньше *max-threads*) и получить закешированные
-    ;; результаты
-    (-> (map deref results)
+  (let [;; Канал задач ограниченной длины
+        c (chan *max-threads*)
+        ;; Канал результатов
+        results (chan)]
+    (doseq [q queries]
+      ;; Синхронная запись задач в канал
+      (>!! c (go
+               ;; Выполнившаяся задача записывает результат в канал результатов
+               (>! results (-> q client/get parse-rss-response))
+               ;; Выполнившаяся задача освобождает канал задач
+               (<!! c))))
+    ;; Чтение из канала результатов "довычислит" еще невычисленные потоки
+    (-> (for [_ (range (count queries))]
+          (<!! results))
         get-domains
         prepare-statistics-json)))
 
@@ -112,4 +96,3 @@
 
 (def app
   (handler/site app-routes))
-
