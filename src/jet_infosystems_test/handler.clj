@@ -19,13 +19,13 @@
                     (filter is-item?
                             (get (tagsoup/parse-string (get res :body)) 2)))
         ;; Из каждого результата извлекаем основную ссылку (поле link)
-        links (map #(loop [i-elements %]
-                      (if (seq i-elements)
-                        (let [element (first i-elements)]
-                          (if (and (coll? element)
-                                   (= (first element) :link))
-                            (-> i-elements next first)
-                            (recur (next i-elements))))))
+        links (map (fn [item]
+                     (-> (filter
+                          (fn [[link? _]]
+                            (and (coll? link?)
+                                 (= (first link?) :link)))
+                          (partition-all 2 (next item)))
+                      first second))
                    items)]
     links))
 
@@ -42,16 +42,7 @@
 
 (defn prepare-statistics-json [domains]
   "Считаем количество одноименных доменов, формируем json."
-  (json/generate-string (loop [ds domains
-                               acc {}]
-                          (if (seq ds)
-                            (let [d (first ds)
-                                  d-in-map (get acc d)]
-                              (if d-in-map
-                                ;; Считаем количество одноименных доменов
-                                (recur (next ds) (assoc acc d (inc d-in-map)))
-                                (recur (next ds) (assoc acc d 1))))
-                            acc))
+  (json/generate-string (frequencies domains)
                         {:pretty true}))
 
 ;; Максимальное количество одновременных HTTP-соединений
