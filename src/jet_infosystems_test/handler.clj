@@ -9,24 +9,32 @@
             [clojure.core.async :as async
              :refer [<! >! <!! >!! timeout chan alt! alts!! go buffer]]))
 
+(defn pos [pred coll]
+  (->> coll
+       (map-indexed #(when (pred %2) %1))
+       (remove nil?)
+       (first)))
+
+(defn is-item? [x]
+  (if (coll? x)
+    (= (first x) :item)
+    false))
+
+(defn is-link? [tag]
+  (and (coll? tag)
+       (= (first tag) :link)))
+
+(defn get-link [item]
+  (nth item (inc (pos is-link? item))))
+
 (defn parse-rss-response [res]
   "Получаем список полей link из RSS"
-  (let [is-item? (fn [x] (if (coll? x)
-                           (= (first x) :item)
-                           false))
-        ;; По каждому слову ищем только первые 10 записей
+  (let [;; По каждому слову ищем только первые 10 записей
         items (take 10
                     (filter is-item?
                             (get (tagsoup/parse-string (get res :body)) 2)))
         ;; Из каждого результата извлекаем основную ссылку (поле link)
-        links (map (fn [item]
-                     (-> (filter
-                          (fn [[link? _]]
-                            (and (coll? link?)
-                                 (= (first link?) :link)))
-                          (partition-all 2 (next item)))
-                      first second))
-                   items)]
+        links (remove nil? (map get-link items))]
     links))
 
 (defn get-domains [links]
@@ -47,26 +55,61 @@
 
 ;; Максимальное количество одновременных HTTP-соединений
 (def ^:dynamic *max-threads* 3)
+(def ^:dynamic *timeout* 1000)
+
+;; Канал задач ограниченной длины
+(def workers (chan (buffer *max-threads*)))
+;; Канал результатов
+(def results (chan))
+
+(defn in?
+  "True if seq contains elm."
+  [seq elm]
+  (some #(= elm %) seq))
+
+(defn filter-timeouts [values]
+  (filter #(not (in? [:timeout :exception] %)) values))
+
+(defn wait [ms f & args]
+  (let [r (chan)
+        t (timeout ms)
+        _ (go (>! r (apply f args)))
+        [value channel] (alts!! [r t])]
+    (if (= channel t)
+      :timeout
+      value)))
+
+(defn pretend-log [result q]
+  (println (if (not (in? [:timeout :exception] result))
+             "+ success"
+             (str "- " (name result)))
+           "for" q))
 
 (defn run-queries [queries]
   "Многопоточное получение результатов HTTP-соединений, формирование json-ответа."
-  (let [;; Канал задач ограниченной длины
-        c (chan (buffer *max-threads*))
-        ;; Канал результатов
-        results (chan)]
-    (go
-      (doseq [q queries]
-        ;; Синхронная запись задач в канал
-        (>!! c (go
-                 ;; Выполнившаяся задача записывает результат в канал результатов
-                 (>!! results (-> q client/get parse-rss-response))
-                 ;; Выполнившаяся задача освобождает канал задач
-                 (<!! c)))))
-    ;; Чтение из канала результатов "довычислит" еще невычисленные потоки
-    (-> (for [_ (range (count queries))]
-          (<!! results))
-        get-domains
-        prepare-statistics-json)))
+  (go
+    (doseq [q queries]
+      ;; Синхронная запись задач в канал
+      (>!! workers
+           (go
+             (let [result (wait *timeout*
+                                (fn []
+                                  (try
+                                    (parse-rss-response
+                                     (client/get q {:conn-timeout *timeout*}))
+                                    (catch Throwable e
+                                      :exception))))]
+               (pretend-log result q)
+               ;; Выполнившаяся задача записывает результат в канал результатов
+               (>! results result))
+             ;; Выполнившаяся задача освобождает канал задач
+             (<! workers)))))
+  ;; Чтение из канала результатов "довычислит" еще невычисленные потоки
+  (-> (for [_ (range (count queries))]
+        (<!! results))
+      filter-timeouts
+      get-domains
+      prepare-statistics-json))
 
 (defn process-search [req-params]
   ;; Фильтруем все параметры запроса "query"
@@ -81,6 +124,7 @@
                              queries))}))
 
 (defroutes app-routes
+  ;; http://localhost:3000/search?query=jet&query=smap&query=text&query=info&query=data&query=home
   (GET "/" [] (str "You should use \"search\" url, e.g. "
                    "\"http://localhost:8080/search?query=jet&query=smap\"."))
   (GET "/search" req-params (process-search req-params))
